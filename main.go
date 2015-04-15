@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"runtime"
-	"strings"
 )
 
 var (
@@ -49,11 +48,7 @@ func main() {
 	flag.Usage = usage
 	flag.Parse()
 
-	if flag.NArg() >= 1 && strings.ToLower(flag.Args()[0]) == "help" {
-		*showHelp = true
-	}
-
-	if *showHelp || flag.NArg() != 5 {
+	if *showHelp || flag.NArg() != 4 {
 		flag.Usage()
 		os.Exit(0)
 	}
