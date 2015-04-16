@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"runtime"
 	"time"
@@ -16,6 +17,9 @@ var (
 	// Number of Z-slices that should be combined into one slab.
 	blocksize = flag.Int("blocksize", 32, "")
 
+	minz = flag.Int("minz", 0, "")
+	maxz = flag.Int("maxz", math.MaxInt32, "")
+
 	// How the output should be compressed
 	compression = flag.String("compress", "gzip", "")
 )
@@ -25,8 +29,10 @@ raveler-exporter converts Raveler superpixel-based images + maps to a series of 
 
 Usage: raveler-exporter [options] <superpixel-to-segment-map> <segment-to-body-map> <superpixels directory> <output directory>
 
-	    -compression =string   Compression for output files.  default "gzip" but allows "lz4" and "uncompressed".
+	    -compression =string   Compression for output files.  default "gzip" but allows "lz4" and "none".
 	    -thickness   =number   Number of Z slices should be combined to form each label slab.
+	    -minz        =number   Starting Z slice to process.
+	    -maxz        =number   Ending Z slice to process.
 	-h, -help        (flag)    Show help message
 
 We assume there is enough RAM to hold the both mapping files.

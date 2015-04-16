@@ -194,7 +194,7 @@ func transformImages(sp2body map[Superpixel]uint64, sp_dir, out_dir string) erro
 	// Read all image files, transform them, and write to output directory.
 	var (
 		outbuf  []uint64
-        bytebuf []byte
+		bytebuf []byte
 		nx, ny  int // # of voxels in X and Y direction
 		zoffset int // the starting z of current output buffer
 		zInBuf  int // # of Z slices stored in output buffer
@@ -221,6 +221,11 @@ func transformImages(sp2body map[Superpixel]uint64, sp_dir, out_dir string) erro
 		z, err := strconv.Atoi(rfrag)
 		if err != nil {
 			return fmt.Errorf("error parsing Z in filename %q: %s\n", fullpath, err.Error())
+		}
+
+		// Skip files that aren't within our processing range.
+		if z < *minz || z > *maxz {
+			return nil
 		}
 
 		// Load the superpixel PNG image
@@ -258,8 +263,6 @@ func transformImages(sp2body map[Superpixel]uint64, sp_dir, out_dir string) erro
 				nx, ny, b.Dx(), b.Dy(), fullpath)
 		}
 
-        fmt.Printf("Processing Z = %d, %d in buf, zhead(z) = %d, zoffset = %d\n", z, zInBuf, zhead(z), zoffset)
-
 		// Write past buffer if we are no longer in it
 		if zInBuf != 0 && zhead(z) != zoffset {
 			if err := writeBuffer(out_dir, nx, ny, zoffset, outbuf, bytebuf); err != nil {
@@ -268,7 +271,7 @@ func transformImages(sp2body map[Superpixel]uint64, sp_dir, out_dir string) erro
 			for i := range outbuf {
 				outbuf[i] = 0
 			}
-		    zoffset = zhead(z)
+			zoffset = zhead(z)
 			zInBuf = 0
 		}
 
@@ -317,11 +320,22 @@ func transformImages(sp2body map[Superpixel]uint64, sp_dir, out_dir string) erro
 }
 
 func writeBuffer(out_dir string, nx, ny, zoffset int, outbuf []uint64, bytebuf []byte) error {
-	// Compute the output file name
-	base := fmt.Sprintf("bodies-z%06d-%dx%dx%d.dat", zoffset, nx, ny, *blocksize)
-	filename := filepath.Join(out_dir, base)
+	tlog := NewTimeLog()
 
-	fmt.Printf("Writing %s...\n", base)
+	// Compute the output file name
+	var ext string
+	switch *compression {
+	case "none":
+		ext = "dat"
+	case "lz4":
+		ext = "lz4"
+	case "gzip":
+		ext = "gz"
+	default:
+		return fmt.Errorf("unknown compression type %q", *compression)
+	}
+	base := fmt.Sprintf("bodies-z%06d-%dx%dx%d.%s", zoffset, nx, ny, *blocksize, ext)
+	filename := filepath.Join(out_dir, base)
 
 	// Store the outbut buffer to preallocated byte slice.
 	for i, label := range outbuf {
@@ -366,5 +380,6 @@ func writeBuffer(out_dir string, nx, ny, zoffset int, outbuf []uint64, bytebuf [
 	default:
 		return fmt.Errorf("unknown compression type %q", *compression)
 	}
+	tlog.Printf("Wrote %s", filename)
 	return nil
 }
