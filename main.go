@@ -6,7 +6,10 @@ import (
 	"log"
 	"math"
 	"os"
+	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"time"
 )
 
@@ -22,6 +25,11 @@ var (
 
 	// How the output should be compressed
 	compression = flag.String("compress", "gzip", "")
+
+	// output file for cluster script
+	script      = flag.String("script", "", "")
+	binpath     = flag.String("binpath", "/groups/flyem/proj/builds/cluster2015", "")
+	filesPerJob = flag.Int("filesperjob", *blocksize*5, "")
 )
 
 const helpMessage = `
@@ -30,7 +38,12 @@ raveler-exporter converts Raveler superpixel-based images + maps to a series of 
 Usage: raveler-exporter [options] <superpixel-to-segment-map> <segment-to-body-map> <superpixels directory> <output directory>
 
 	    -compression =string   Compression for output files.  default "gzip" but allows "lz4" and "none".
-	    -thickness   =number   Number of Z slices should be combined to form each label slab.
+
+	    -script      =string   Generate batch script for running on SGE cluster
+	    -filesperjob =number   Number of Z slices that should be assigned to one cluster job if using -script.
+	    -binpath     =string   Absolute path to this executable for script creation.
+
+	    -blocksize   =number   Number of Z slices should be combined to form each label slab.
 	    -minz        =number   Starting Z slice to process.
 	    -maxz        =number   Ending Z slice to process.
 	-h, -help        (flag)    Show help message
@@ -82,11 +95,119 @@ func main() {
 		os.Exit(1)
 	}
 
+	args := flag.Args()
+	if *script != "" {
+		if err := generateScript(args[0], args[1], args[2], args[3]); err != nil {
+			fmt.Printf("Error generating script: %s\n", err.Error())
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	numCPU := runtime.NumCPU()
 	runtime.GOMAXPROCS(numCPU)
 
-	args := flag.Args()
 	if err := processRavelerExport(args[0], args[1], args[2], args[3]); err != nil {
 		fmt.Printf("Error: %s\n", err.Error())
 	}
+}
+
+func generateScript(sp_to_seg, seg_to_body, sp_dir, out_dir string) error {
+	fmt.Printf("Generating batcn script: %s\n", *script)
+
+	file, err := os.Create(*script)
+	if err != nil {
+		return fmt.Errorf("Could not open %q to write it: %s", *script, err.Error())
+	}
+	defer file.Close()
+
+	fileregex, err := regexp.Compile(`[[:digit:]]+\.png$`)
+	if err != nil {
+		return err
+	}
+
+	var (
+		jobnum           int
+		zstart, curFiles int
+		zoffset          int // the starting z of current output buffer
+		first            bool
+	)
+	first = true
+	err = filepath.Walk(sp_dir, func(fullpath string, f os.FileInfo, err error) error {
+		if err != nil {
+			fmt.Printf("Error traversing the superpixel image directory @ %s: %s\n", fullpath, err.Error())
+			os.Exit(1)
+		}
+		ext := filepath.Ext(fullpath)
+		if ext != ".png" {
+			fmt.Printf("Skipping transformation of non-PNG file: %s\n", fullpath)
+			return nil
+		}
+
+		// Parse the filename to get the Z slice.
+		rfrag := fileregex.FindString(fullpath) // gets everything from number through end of extension.
+		if len(rfrag) < 5 {
+			return fmt.Errorf("error parsing Z slice in filename %q", fullpath)
+		}
+		rfrag = rfrag[:len(rfrag)-4]
+		z, err := strconv.Atoi(rfrag)
+		if err != nil {
+			return fmt.Errorf("error parsing Z in filename %q: %s\n", fullpath, err.Error())
+		}
+
+		// Skip files that aren't within our processing range.
+		if z < *minz || z > *maxz {
+			return nil
+		}
+
+		if first {
+			zstart = z
+			first = false
+		}
+
+		// Good stopping place given block sizes?
+		if zhead(z) != zoffset {
+			zlast := zoffset + *blocksize - 1
+
+			if curFiles >= *filesPerJob {
+				cmd := fmt.Sprintf(`%s/raveler-exporter -minz=%d -maxz=%d %s %s %s %s`, *binpath, zstart, zlast,
+					sp_to_seg, seg_to_body, sp_dir, out_dir)
+
+				jobname := fmt.Sprintf("ravelerexport-%d", jobnum)
+				job := fmt.Sprintf(`qsub -pe batch 16 -N %s -j y -o /dev/null -b y -cwd -V '%s'`, jobname, cmd)
+				job += "\n"
+
+				if _, err := file.WriteString(job); err != nil {
+					return err
+				}
+				zstart = z
+				curFiles = 0
+				jobnum++
+			}
+		}
+
+		// Count this file and see if we have enough to print a job in the script
+		zoffset = zhead(z)
+		curFiles++
+		return nil
+	})
+	if err != nil {
+		fmt.Printf("Error traversing superpixel directory: %s\n", err.Error())
+		os.Exit(1)
+	}
+
+	if curFiles > 0 {
+		zlast := zoffset + *blocksize - 1
+
+		cmd := fmt.Sprintf(`%s/raveler-exporter -minz=%d -maxz=%d %s %s %s %s`, *binpath, zstart, zlast,
+			sp_to_seg, seg_to_body, sp_dir, out_dir)
+
+		jobname := fmt.Sprintf("ravelerexport-%d", jobnum)
+		job := fmt.Sprintf(`qsub -pe batch 16 -N %s -j y -o /dev/null -b y -cwd -V '%s'`, jobname, cmd)
+
+		if _, err := file.WriteString(job); err != nil {
+			return err
+		}
+	}
+	return nil
 }
