@@ -69,6 +69,8 @@ func writeBuffer(out_dir string, nx, ny, zoffset int, outbuf []uint64) error {
 	base := fmt.Sprintf("bodies-z%06d-%dx%dx%d.dat", zoffset, nx, ny, *blocksize)
 	filename := filepath.Join(out_dir, base)
 
+    fmt.Printf("Writing %s...\n", base)
+
 	// Store the outbut buffer to preallocated byte slice.
 	for i, label := range outbuf {
 		binary.LittleEndian.PutUint64(bytebuf[i*4:i*4+4], label)

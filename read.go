@@ -41,7 +41,12 @@ func loadSegBodyMap(filename string) (map[uint64]uint64, error) {
 		}
 		segmentToBodyMap[segment] = body
 		linenum++
+
+        if linenum % 100000 == 0 {
+            fmt.Printf("Loaded %d lines of segment->body map\n", linenum)
+        }
 	}
+    fmt.Printf("Loaded segment->body map: %s\n", filename)
 	return segmentToBodyMap, nil
 }
 
@@ -148,18 +153,25 @@ func transformImages(sp2body map[Superpixel]uint64, sp_dir, out_dir string) erro
 		zoffset = zhead(z)
 		zbuf := z % *blocksize // z offset into the buffer
 
+        var label uint32
+        var body uint64
+        var found bool
 		sp := Superpixel{Slice: uint32(z)}
 		i := 0
 		for y := b.Min.Y; y < b.Max.Y; y++ {
 			for x := b.Min.X; x < b.Max.X; x++ {
-				if sp.Label, err = getSuperpixelId(img.At(x, y), format); err != nil {
+				if label, err = getSuperpixelId(img.At(x, y), format); err != nil {
 					return err
 				}
-				body, found := sp2body[sp]
-				if !found {
-					fmt.Printf("Could not find superpixel (%d, %d) in mapping files.  Setting to body 0.\n", sp.Slice, sp.Label)
-					body = 0
-				}
+                if label == 0 {
+                    body = 0
+                } else {
+                    body, found = sp2body[sp]
+			        if !found {
+					    fmt.Printf("Could not find superpixel (%d, %d) in mapping files.  Setting to body 0.\n", sp.Slice, sp.Label)
+					    body = 0
+				    }
+                }
 				outbuf[zbuf*nx*ny+i] = body
 				i++
 			}
@@ -201,6 +213,7 @@ func processRavelerExport(sp_to_seg, seg_to_body, sp_dir, out_dir string) error 
 	lineReader := bufio.NewReader(file)
 	linenum := 0
 
+    fmt.Printf("Processing superpixel->segment map: %s\n", sp_to_seg)
 	for {
 		line, err := lineReader.ReadString('\n')
 		if err != nil {

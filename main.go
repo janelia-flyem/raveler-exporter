@@ -62,7 +62,7 @@ func main() {
 	runtime.GOMAXPROCS(numCPU)
 
 	args := flag.Args()
-	if err := processRavelerExport(args[1], args[2], args[3], args[4]); err != nil {
+	if err := processRavelerExport(args[0], args[1], args[2], args[3]); err != nil {
 		fmt.Printf("Error: %s\n", err.Error())
 	}
 }
