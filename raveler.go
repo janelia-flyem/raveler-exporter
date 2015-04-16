@@ -198,7 +198,9 @@ func transformImages(sp2body map[Superpixel]uint64, sp_dir, out_dir string) erro
 		nx, ny  int // # of voxels in X and Y direction
 		zoffset int // the starting z of current output buffer
 		zInBuf  int // # of Z slices stored in output buffer
+		first   bool
 	)
+	first = true
 	err = filepath.Walk(sp_dir, func(fullpath string, f os.FileInfo, err error) error {
 		if err != nil {
 			fmt.Printf("Error traversing the superpixel image directory @ %s: %s\n", fullpath, err.Error())
@@ -261,6 +263,11 @@ func transformImages(sp2body map[Superpixel]uint64, sp_dir, out_dir string) erro
 		} else if nx != b.Dx() || ny != b.Dy() {
 			return fmt.Errorf("superpixel image changes sizes: expected %d x %d and got %d x %d: %s",
 				nx, ny, b.Dx(), b.Dy(), fullpath)
+		}
+
+		if first {
+			zoffset = zhead(z)
+			first = false
 		}
 
 		// Write past buffer if we are no longer in it
