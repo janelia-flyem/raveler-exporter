@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"time"
 )
 
 var (
@@ -24,12 +25,29 @@ raveler-exporter converts Raveler superpixel-based images + maps to a series of 
 
 Usage: raveler-exporter [options] <superpixel-to-segment-map> <segment-to-body-map> <superpixels directory> <output directory>
 
-	  -compression =string   Compression for output files.  default "gzip" but allows "lz4" and "uncompressed".
-	  -thickness   =number   Number of Z slices should be combined to form each label slab.
-  -h, -help        (flag)    Show help message
+	    -compression =string   Compression for output files.  default "gzip" but allows "lz4" and "uncompressed".
+	    -thickness   =number   Number of Z slices should be combined to form each label slab.
+	-h, -help        (flag)    Show help message
 
 We assume there is enough RAM to hold the both mapping files.
 `
+
+// TimeLog adds elapsed time to logging.
+// Example:
+//     mylog := NewTimeLog()
+//     ...
+//     mylog.Printf("stuff happened")  // Appends elapsed time from NewTimeLog() to message.
+type TimeLog struct {
+	start time.Time
+}
+
+func NewTimeLog() TimeLog {
+	return TimeLog{time.Now()}
+}
+
+func (t TimeLog) Printf(format string, args ...interface{}) {
+	log.Printf(format+": %s\n", append(args, time.Since(t.start))...)
+}
 
 var usage = func() {
 	fmt.Printf(helpMessage)
