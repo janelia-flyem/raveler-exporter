@@ -28,7 +28,7 @@ var (
 
 	// output file for cluster script
 	script      = flag.String("script", "", "")
-	binpath     = flag.String("binpath", "/groups/flyem/proj/builds/cluster2015", "")
+	binpath     = flag.String("binpath", "/groups/flyem/proj/builds/cluster2015/bin", "")
 	filesPerJob = flag.Int("filesperjob", *blocksize*5, "")
 )
 
@@ -174,7 +174,7 @@ func generateScript(sp_to_seg, seg_to_body, sp_dir, out_dir string) error {
 					sp_to_seg, seg_to_body, sp_dir, out_dir)
 
 				jobname := fmt.Sprintf("ravelerexport-%d", jobnum)
-				job := fmt.Sprintf(`qsub -pe batch 16 -N %s -j y -o /dev/null -b y -cwd -V '%s'`, jobname, cmd)
+				job := fmt.Sprintf(`qsub -pe batch 16 -N %s -j y -o %s.log -b y -cwd -V '%s > %s.out'`, jobname, jobname, cmd, jobname)
 				job += "\n"
 
 				if _, err := file.WriteString(job); err != nil {
