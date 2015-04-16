@@ -29,8 +29,6 @@ const (
 	Superpixel24Bits
 )
 
-var bytebuf []byte
-
 // Superpixel is a Raveler-oriented description of a superpixel that
 // breaks a unique superpixel id into two components: a slice and a
 // unique label within that slice.
@@ -188,7 +186,7 @@ func transformImages(sp2body map[Superpixel]uint64, sp_dir, out_dir string) erro
 		return fmt.Errorf("Supplied output path (%s) is not a directory.", out_dir)
 	}
 
-	fileregex, err := regexp.Compile(`[[:digit:]]\.png$`)
+	fileregex, err := regexp.Compile(`[[:digit:]]+\.png$`)
 	if err != nil {
 		return err
 	}
@@ -196,6 +194,7 @@ func transformImages(sp2body map[Superpixel]uint64, sp_dir, out_dir string) erro
 	// Read all image files, transform them, and write to output directory.
 	var (
 		outbuf  []uint64
+        bytebuf []byte
 		nx, ny  int // # of voxels in X and Y direction
 		zoffset int // the starting z of current output buffer
 		zInBuf  int // # of Z slices stored in output buffer
@@ -253,26 +252,28 @@ func transformImages(sp2body map[Superpixel]uint64, sp_dir, out_dir string) erro
 			ny = b.Dy()
 			nxy := nx * ny
 			outbuf = make([]uint64, *blocksize*nxy, *blocksize*nxy)
-			bytebuf = make([]byte, *blocksize*nxy*4, *blocksize*nxy*4)
+			bytebuf = make([]byte, *blocksize*nxy*8, *blocksize*nxy*8)
 		} else if nx != b.Dx() || ny != b.Dy() {
 			return fmt.Errorf("superpixel image changes sizes: expected %d x %d and got %d x %d: %s",
 				nx, ny, b.Dx(), b.Dy(), fullpath)
 		}
 
+        fmt.Printf("Processing Z = %d, %d in buf, zhead(z) = %d, zoffset = %d\n", z, zInBuf, zhead(z), zoffset)
+
 		// Write past buffer if we are no longer in it
 		if zInBuf != 0 && zhead(z) != zoffset {
-			if err := writeBuffer(out_dir, nx, ny, zoffset, outbuf); err != nil {
+			if err := writeBuffer(out_dir, nx, ny, zoffset, outbuf, bytebuf); err != nil {
 				return err
 			}
 			for i := range outbuf {
 				outbuf[i] = 0
 			}
+		    zoffset = zhead(z)
 			zInBuf = 0
 		}
 
 		// Iterate through the image and store body into our output buffer.
 		zInBuf++
-		zoffset = zhead(z)
 		zbuf := z % *blocksize // z offset into the buffer
 
 		var label uint32
@@ -308,14 +309,14 @@ func transformImages(sp2body map[Superpixel]uint64, sp_dir, out_dir string) erro
 
 	// Make sure we write any unsaved data in output buffer
 	if zInBuf != 0 {
-		if err := writeBuffer(out_dir, nx, ny, zoffset, outbuf); err != nil {
+		if err := writeBuffer(out_dir, nx, ny, zoffset, outbuf, bytebuf); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func writeBuffer(out_dir string, nx, ny, zoffset int, outbuf []uint64) error {
+func writeBuffer(out_dir string, nx, ny, zoffset int, outbuf []uint64, bytebuf []byte) error {
 	// Compute the output file name
 	base := fmt.Sprintf("bodies-z%06d-%dx%dx%d.dat", zoffset, nx, ny, *blocksize)
 	filename := filepath.Join(out_dir, base)
@@ -324,7 +325,7 @@ func writeBuffer(out_dir string, nx, ny, zoffset int, outbuf []uint64) error {
 
 	// Store the outbut buffer to preallocated byte slice.
 	for i, label := range outbuf {
-		binary.LittleEndian.PutUint64(bytebuf[i*4:i*4+4], label)
+		binary.LittleEndian.PutUint64(bytebuf[i*8:i*8+8], label)
 	}
 
 	// Setup file for write
