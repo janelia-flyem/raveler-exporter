@@ -18,13 +18,16 @@ var (
 	showHelp = flag.Bool("help", false, "")
 
 	// Number of Z-slices that should be combined into one slab.
-	blocksize = flag.Int("blocksize", 32, "")
+	blocksize    = flag.Int("blocksize", 32, "")
+	roiBlocksize = flag.Int("roiblocksize", 32, "")
 
 	minz = flag.Int("minz", 0, "")
 	maxz = flag.Int("maxz", math.MaxInt32, "")
 
 	// How the output should be compressed
 	compression = flag.String("compress", "gzip", "")
+
+	roiFile = flag.String("roi", "", "")
 
 	// output file for cluster script
 	script      = flag.String("script", "", "")
@@ -37,16 +40,19 @@ raveler-exporter converts Raveler superpixel-based images + maps to a series of 
 
 Usage: raveler-exporter [options] <superpixel-to-segment-map> <segment-to-body-map> <superpixels directory> <output directory>
 
-	    -compression =string   Compression for output files.  default "gzip" but allows "lz4" and "none".
+	    -compression    =string   Compression for output files.  default "gzip" but allows "lz4" and "none".
 
-	    -script      =string   Generate batch script for running on SGE cluster
-	    -filesperjob =number   Number of Z slices that should be assigned to one cluster job if using -script.
-	    -binpath     =string   Absolute path to this executable for script creation.
+	    -script         =string   Generate batch script for running on SGE cluster
+	    -filesperjob    =number   Number of Z slices that should be assigned to one cluster job if using -script.
+	    -binpath        =string   Absolute path to this executable for script creation.
 
-	    -blocksize   =number   Number of Z slices should be combined to form each label slab.
-	    -minz        =number   Starting Z slice to process.
-	    -maxz        =number   Ending Z slice to process.
-	-h, -help        (flag)    Show help message
+	    -roi            =string   Absolute path to a ROI JSON containing sorted (in ascending order) block index spans
+	    -roiblocksize   =number   Size of each ROI block in pixels diameter (default 32)
+
+	    -blocksize      =number   Number of Z slices should be combined to form each label slab (default 32)
+	    -minz           =number   Starting Z slice to process.
+	    -maxz           =number   Ending Z slice to process.
+	-h, -help           (flag)    Show help message
 
 We assume there is enough RAM to hold the both mapping files.
 `
@@ -126,6 +132,14 @@ func generateScript(sp_to_seg, seg_to_body, sp_dir, out_dir string) error {
 		return err
 	}
 
+	var options string
+	if *blocksize != 32 {
+		options += fmt.Sprintf("-blocksize=%d ", *blocksize)
+	}
+	if *roiFile != "" {
+		options += fmt.Sprintf("-roi=%s", *roiFile)
+	}
+
 	var (
 		jobnum           int
 		zstart, curFiles int
@@ -170,7 +184,7 @@ func generateScript(sp_to_seg, seg_to_body, sp_dir, out_dir string) error {
 			zlast := zoffset + *blocksize - 1
 
 			if curFiles >= *filesPerJob {
-				cmd := fmt.Sprintf(`%s/raveler-exporter -minz=%d -maxz=%d %s %s %s %s`, *binpath, zstart, zlast,
+				cmd := fmt.Sprintf(`%s/raveler-exporter %s -minz=%d -maxz=%d %s %s %s %s`, *binpath, options, zstart, zlast,
 					sp_to_seg, seg_to_body, sp_dir, out_dir)
 
 				jobname := fmt.Sprintf("ravelerexport-%d", jobnum)

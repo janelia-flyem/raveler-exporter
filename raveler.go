@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"compress/gzip"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"image"
 	"image/color"
 	_ "image/png"
+	"io/ioutil"
 
 	lz4 "github.com/janelia-flyem/go/golz4"
 )
@@ -35,6 +37,86 @@ const (
 type Superpixel struct {
 	Slice uint32
 	Label uint32
+}
+
+// Span is (Z, Y, X0, X1).
+// TODO -- Consolidate with dvid.RLE since both handle run-length encodings in X, although
+// dvid.RLE handles voxel coordinates not block (chunk) coordinates.
+type Span [4]int
+
+func (s Span) String() string {
+	return fmt.Sprintf("[%d, %d, %d, %d]", s[0], s[1], s[2], s[3])
+}
+
+// Extends returns true and modifies the span if the given point
+// is one more in x direction than this span.  Else it returns false.
+func (s *Span) Extends(x, y, z int) bool {
+	if s == nil || (*s)[0] != z || (*s)[1] != y || (*s)[3] != x-1 {
+		return false
+	}
+	(*s)[3] = x
+	return true
+}
+
+func (s Span) Unpack() (z, y, x0, x1 int) {
+	return s[0], s[1], s[2], s[3]
+}
+
+func (s Span) Less(block [3]int) bool {
+	if s[0] < block[2] {
+		return true
+	}
+	if s[0] > block[2] {
+		return false
+	}
+	if s[1] < block[1] {
+		return true
+	}
+	if s[1] > block[1] {
+		return false
+	}
+	if s[3] < block[0] {
+		return true
+	}
+	return false
+}
+
+func (s Span) Includes(block [3]int) bool {
+	if s[0] != block[2] {
+		return false
+	}
+	if s[1] != block[1] {
+		return false
+	}
+	if s[2] > block[0] || s[3] < block[0] {
+		return false
+	}
+	return true
+}
+
+// Returns the current span index and whether given block is included in span.
+func seekSpan(block [3]int, roi []Span, curSpanI int) (int, bool) {
+	numSpans := len(roi)
+	if curSpanI >= numSpans {
+		return curSpanI, false
+	}
+
+	// Keep going through spans until we are equal to or past the chunk point.
+	for {
+		curSpan := roi[curSpanI]
+		if curSpan.Less(block) {
+			curSpanI++
+		} else {
+			if curSpan.Includes(block) {
+				return curSpanI, true
+			} else {
+				return curSpanI, false
+			}
+		}
+		if curSpanI >= numSpans {
+			return curSpanI, false
+		}
+	}
 }
 
 // Returns the first Z of the block in which this z is located.
@@ -77,6 +159,24 @@ func getSuperpixelId(c color.Color, format SuperpixelFormat) (id uint32, err err
 }
 
 func processRavelerExport(sp_to_seg, seg_to_body, sp_dir, out_dir string) error {
+	// If we have roi, load it.
+	var roi []Span
+
+	if *roiFile != "" {
+		f, err := os.Open(*roiFile)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		jsonBytes, err := ioutil.ReadAll(f)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(jsonBytes, &roi); err != nil {
+			return fmt.Errorf("Error trying to parse JSON ROI: %s", err.Error())
+		}
+	}
+
 	// Get the seg->body map
 	seg2body, err := loadSegBodyMap(seg_to_body)
 	if err != nil {
@@ -137,7 +237,7 @@ func processRavelerExport(sp_to_seg, seg_to_body, sp_dir, out_dir string) error 
 	seg2body = nil
 
 	// Read in an transform each superpixel image file.
-	return transformImages(sp2body, sp_dir, out_dir)
+	return transformImages(sp2body, roi, sp_dir, out_dir)
 }
 
 func loadSegBodyMap(filename string) (map[uint64]uint64, error) {
@@ -174,7 +274,7 @@ func loadSegBodyMap(filename string) (map[uint64]uint64, error) {
 	return segmentToBodyMap, nil
 }
 
-func transformImages(sp2body map[Superpixel]uint64, sp_dir, out_dir string) error {
+func transformImages(sp2body map[Superpixel]uint64, roi []Span, sp_dir, out_dir string) error {
 	// Make sure output directory exists
 	if fileinfo, err := os.Stat(out_dir); os.IsNotExist(err) {
 		fmt.Printf("Creating output directory: %s\n", out_dir)
@@ -289,10 +389,24 @@ func transformImages(sp2body map[Superpixel]uint64, sp_dir, out_dir string) erro
 		var label uint32
 		var body uint64
 		var found bool
+		var block [3]int
+
 		sp := Superpixel{Slice: uint32(z)}
 		i := 0
+		curSpan := 0
+		block[2] = z / *roiBlocksize // We could be more efficient in generating block coord.
 		for y := b.Min.Y; y < b.Max.Y; y++ {
 			for x := b.Min.X; x < b.Max.X; x++ {
+				if roi != nil {
+					block[0] = x / *roiBlocksize
+					block[1] = y / *roiBlocksize
+					var inROI bool
+					curSpan, inROI = seekSpan(block, roi, curSpan)
+					if !inROI {
+						i++
+						continue
+					}
+				}
 				if label, err = getSuperpixelId(img.At(x, y), format); err != nil {
 					return err
 				}
