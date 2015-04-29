@@ -301,7 +301,6 @@ func transformImages(sp2body map[Superpixel]uint64, roi []Span, sp_dir, out_dir 
 		first   bool
 	)
 	first = true
-	curSpan := 0
 	err = filepath.Walk(sp_dir, func(fullpath string, f os.FileInfo, err error) error {
 		if err != nil {
 			fmt.Printf("Error traversing the superpixel image directory @ %s: %s\n", fullpath, err.Error())
@@ -392,10 +391,15 @@ func transformImages(sp2body map[Superpixel]uint64, roi []Span, sp_dir, out_dir 
 		var found bool
 		var block [3]int
 
+		block[0] = b.Min.X / *roiBlocksize
+		block[1] = b.Min.Y / *roiBlocksize
+		block[2] = z / *roiBlocksize
+		initSpan, _ := seekSpan(block, roi, 0)
+
 		sp := Superpixel{Slice: uint32(z)}
 		i := 0
-		block[2] = z / *roiBlocksize // We could be more efficient in generating block coord.
 		for y := b.Min.Y; y < b.Max.Y; y++ {
+			curSpan := initSpan
 			for x := b.Min.X; x < b.Max.X; x++ {
 				if roi != nil {
 					block[0] = x / *roiBlocksize
