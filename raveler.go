@@ -424,6 +424,9 @@ func transformImages(sp2body map[Superpixel]uint64, roi []Span, sp_dir, out_dir 
 						body = 0
 					}
 				}
+				if *bodyoffset != 0 {
+					body += uint64(*bodyoffset)
+				}
 				outbuf[zbuf*nx*ny+i] = body
 				i++
 			}

@@ -21,6 +21,8 @@ var (
 	blocksize    = flag.Int("blocksize", 32, "")
 	roiBlocksize = flag.Int("roiblocksize", 32, "")
 
+	bodyoffset = flag.Int("bodyoffset", 0, "")
+
 	minz = flag.Int("minz", 0, "")
 	maxz = flag.Int("maxz", math.MaxInt32, "")
 
@@ -49,6 +51,7 @@ Usage: raveler-exporter [options] <superpixel-to-segment-map> <segment-to-body-m
 	    -roi            =string   Absolute path to a ROI JSON containing sorted (in ascending order) block index spans
 	    -roiblocksize   =number   Size of each ROI block in pixels diameter (default 32)
 
+	    -bodyoffset     =number   Offset to apply to body labels, e.g., if 1000 all body labels are incremented by 1000.
 	    -blocksize      =number   Number of Z slices should be combined to form each label slab (default 32)
 	    -minz           =number   Starting Z slice to process.
 	    -maxz           =number   Ending Z slice to process.
