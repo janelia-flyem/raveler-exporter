@@ -110,7 +110,7 @@ func main() {
 	flag.Usage = usage
 	flag.Parse()
 
-	if *showHelp || flag.NArg() != 4 {
+	if *showHelp || flag.NArg() != 3 {
 		flag.Usage()
 		os.Exit(0)
 	}
