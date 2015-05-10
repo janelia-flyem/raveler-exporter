@@ -256,11 +256,12 @@ func generateScript(sp_to_seg, seg_to_body, sp_dir, out_dir string) error {
 	if curFiles > 0 {
 		zlast := zoffset + *slabZ - 1
 
-		cmd := fmt.Sprintf(`%s/raveler-exporter -minz=%d -maxz=%d %s %s %s %s`, *binpath, zstart, zlast,
-			sp_to_seg, seg_to_body, sp_dir, out_dir)
+		cmd := fmt.Sprintf(`%s/raveler-exporter %s -minz=%d -maxz=%d %s %s %s`, *binpath,
+			strings.Join(options, " "), zstart, zlast, sp_to_seg, seg_to_body, sp_dir)
 
 		jobname := fmt.Sprintf("ravelerexport-%d", jobnum)
-		job := fmt.Sprintf(`qsub -pe batch 16 -N %s -j y -o /dev/null -b y -cwd -V '%s'`, jobname, cmd)
+		job := fmt.Sprintf(`qsub -pe batch 16 -N %s -j y -o %s.log -b y -cwd -V '%s >> %s.log'`, jobname, jobname, cmd, jobname)
+		job += "\n"
 
 		if _, err := file.WriteString(job); err != nil {
 			return err
