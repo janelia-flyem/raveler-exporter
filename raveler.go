@@ -519,12 +519,17 @@ func writeDVID(slabBuf []byte, ox, oy, oz int) error {
 		url += "?compression=" + *compression
 	}
 
+    out, err := compress(slabBuf)
+    if err != nil {
+        return err
+    }
+
 	fmt.Printf("POSTing data to %s\n", url)
 	if *dryrun {
 		return nil
 	}
 
-	r, err := http.Post(url, "application/octet-stream", bytes.NewBuffer(slabBuf))
+	r, err := http.Post(url, "application/octet-stream", bytes.NewBuffer(out))
 	if err != nil {
 		return err
 	}
