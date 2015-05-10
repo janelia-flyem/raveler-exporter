@@ -171,7 +171,7 @@ func generateScript(sp_to_seg, seg_to_body, sp_dir, out_dir string) error {
 		options = append(options, fmt.Sprintf("-roi=%s", *roiFile))
 	}
 
-	if *compression != "none" {
+	if *compression != "lz4" {
 		options = append(options, fmt.Sprintf("-compress=%s", *compression))
 	}
 
