@@ -542,7 +542,7 @@ func writeDVID(slabBuf []byte, ox, oy, oz int) error {
 			return nil
 		case http.StatusServiceUnavailable:
 			// Retry after variable delay
-			timeout := time.Duration(180 + rand.Intn(30))
+			timeout := time.Duration(30 + rand.Intn(30))
 			time.Sleep(timeout * time.Second)
 			fmt.Printf("Unsuccessful POST of slab @ (%d,%d,%d) %d bytes.  Retrying in %d seconds\n",
 				ox, oy, oz, len(out), timeout)
