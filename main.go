@@ -183,6 +183,10 @@ func generateScript(sp_to_seg, seg_to_body, sp_dir, out_dir string) error {
 		options = append(options, fmt.Sprintf("-url=%s", *url))
 	}
 
+	if *bodyoffset != 0 {
+		options = append(options, fmt.Sprintf("-bodyoffset=%d", *bodyoffset))
+	}
+
 	var (
 		jobnum           int
 		zstart, curFiles int
