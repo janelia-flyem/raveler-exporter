@@ -524,7 +524,7 @@ func writeDVID(slabBuf []byte, ox, oy, oz int) error {
         return err
     }
 
-	fmt.Printf("POSTing data to %s\n", url)
+	fmt.Printf("POSTing %d bytes to %s\n", len(out), url)
 	if *dryrun {
 		return nil
 	}
