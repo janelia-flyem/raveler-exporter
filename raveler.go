@@ -513,7 +513,7 @@ func writeLayer(layer layerT, zoffset int) error {
 }
 
 func writeDVID(slabBuf []byte, ox, oy, oz int) error {
-	url := fmt.Sprintf("%s/%d_%d_%d/%d_%d_%d", *url, *slabX, *slabY, *slabZ, ox, oy, oz)
+	url := fmt.Sprintf("%s/raw/0_1_2/%d_%d_%d/%d_%d_%d", *url, *slabX, *slabY, *slabZ, ox, oy, oz)
 	switch *compression {
 	case "gzip", "lz4":
 		url += "?compression=" + *compression
