@@ -10,15 +10,22 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 )
 
 var (
 	// Display usage if true.
+	dryrun   = flag.Bool("dryrun", false, "")
 	showHelp = flag.Bool("help", false, "")
 
-	// Number of Z-slices that should be combined into one slab.
-	blocksize    = flag.Int("blocksize", 32, "")
+	outdir = flag.String("outdir", "", "")
+	url    = flag.String("url", "", "")
+
+	slabX = flag.Int("slabX", 512, "")
+	slabY = flag.Int("slabY", 512, "")
+	slabZ = flag.Int("slabZ", 32, "")
+
 	roiBlocksize = flag.Int("roiblocksize", 32, "")
 
 	bodyoffset = flag.Int("bodyoffset", 0, "")
@@ -27,24 +34,27 @@ var (
 	maxz = flag.Int("maxz", math.MaxInt32, "")
 
 	// How the output should be compressed
-	compression = flag.String("compress", "gzip", "")
+	compression = flag.String("compress", "lz4", "")
 
 	roiFile = flag.String("roi", "", "")
 
 	// output file for cluster script
 	script      = flag.String("script", "", "")
 	binpath     = flag.String("binpath", "/groups/flyem/proj/builds/cluster2015/bin", "")
-	filesPerJob = flag.Int("filesperjob", *blocksize*5, "")
+	filesPerJob = flag.Int("filesperjob", *slabZ*5, "")
 )
 
 const helpMessage = `
 raveler-exporter converts Raveler superpixel-based images + maps to a series of compressed label slabs.
 
-Usage: raveler-exporter [options] <superpixel-to-segment-map> <segment-to-body-map> <superpixels directory> <output directory>
+Usage: raveler-exporter [options] <superpixel-to-segment-map> <segment-to-body-map> <superpixels directory> 
 
-	    -compression    =string   Compression for output files.  default "gzip" but allows "lz4" and "none".
+		-outdir         =string   Output directory for file output
+		-url            =string   POST URL for DVID, e.g., "http://dvidserver.com/api/653/dataname"
 
-	    -script         =string   Generate batch script for running on SGE cluster
+	    -compression    =string   Compression for output files.  default "lz4" but allows "gzip" and "none".
+
+	    -script         =string   Generate batch script for running on SGE cluster (requires -directory)
 	    -filesperjob    =number   Number of Z slices that should be assigned to one cluster job if using -script.
 	    -binpath        =string   Absolute path to this executable for script creation.
 
@@ -52,9 +62,15 @@ Usage: raveler-exporter [options] <superpixel-to-segment-map> <segment-to-body-m
 	    -roiblocksize   =number   Size of each ROI block in pixels diameter (default 32)
 
 	    -bodyoffset     =number   Offset to apply to body labels, e.g., if 1000 all body labels are incremented by 1000.
-	    -blocksize      =number   Number of Z slices should be combined to form each label slab (default 32)
+
+	    -slabX          =number   Size along X of label slab (default 512)
+	    -slabY          =number   Size along Y of label slab (default 512)
+	    -slabZ          =number   Size along Z of label slab (default 32)
+
 	    -minz           =number   Starting Z slice to process.
 	    -maxz           =number   Ending Z slice to process.
+
+	    -dryrun         (flag)    Don't write files or send POST requests to DVID
 	-h, -help           (flag)    Show help message
 
 We assume there is enough RAM to hold the both mapping files.
@@ -99,14 +115,23 @@ func main() {
 		os.Exit(0)
 	}
 
-	if *blocksize < 1 {
+	if *slabZ < 1 {
 		fmt.Printf("Thickness must be >= 1 Z slice\n")
+		os.Exit(1)
+	}
+
+	if *url == "" && *outdir == "" {
+		fmt.Printf("Must either use -url and/or -outdir for output!\n")
 		os.Exit(1)
 	}
 
 	args := flag.Args()
 	if *script != "" {
-		if err := generateScript(args[0], args[1], args[2], args[3]); err != nil {
+		if *outdir == "" {
+			fmt.Printf("Script output requires -outdir as well\n")
+			os.Exit(1)
+		}
+		if err := generateScript(args[0], args[1], args[2], *outdir); err != nil {
 			fmt.Printf("Error generating script: %s\n", err.Error())
 			os.Exit(1)
 		}
@@ -116,7 +141,7 @@ func main() {
 	numCPU := runtime.NumCPU()
 	runtime.GOMAXPROCS(numCPU)
 
-	if err := processRavelerExport(args[0], args[1], args[2], args[3]); err != nil {
+	if err := processRavelerExport(args[0], args[1], args[2]); err != nil {
 		fmt.Printf("Error: %s\n", err.Error())
 	}
 }
@@ -135,12 +160,19 @@ func generateScript(sp_to_seg, seg_to_body, sp_dir, out_dir string) error {
 		return err
 	}
 
-	var options string
-	if *blocksize != 32 {
-		options += fmt.Sprintf("-blocksize=%d ", *blocksize)
+	var options []string
+	if *slabX != 512 {
+		options = append(options, fmt.Sprintf("-slabX=%d", *slabX))
 	}
+	if *slabY != 512 {
+		options = append(options, fmt.Sprintf("-slabY=%d", *slabY))
+	}
+	if *slabZ != 32 {
+		options = append(options, fmt.Sprintf("-slabZ=%d", *slabZ))
+	}
+
 	if *roiFile != "" {
-		options += fmt.Sprintf("-roi=%s", *roiFile)
+		options = append(options, fmt.Sprintf("-roi=%s", *roiFile))
 	}
 
 	var (
@@ -184,11 +216,11 @@ func generateScript(sp_to_seg, seg_to_body, sp_dir, out_dir string) error {
 
 		// Good stopping place given block sizes?
 		if zhead(z) != zoffset {
-			zlast := zoffset + *blocksize - 1
+			zlast := zoffset + *slabZ - 1
 
 			if curFiles >= *filesPerJob {
-				cmd := fmt.Sprintf(`%s/raveler-exporter %s -minz=%d -maxz=%d %s %s %s %s`, *binpath, options, zstart, zlast,
-					sp_to_seg, seg_to_body, sp_dir, out_dir)
+				cmd := fmt.Sprintf(`%s/raveler-exporter %s -minz=%d -maxz=%d %s %s %s %s`, *binpath,
+					strings.Join(options, " "), zstart, zlast, sp_to_seg, seg_to_body, sp_dir, out_dir)
 
 				jobname := fmt.Sprintf("ravelerexport-%d", jobnum)
 				job := fmt.Sprintf(`qsub -pe batch 16 -N %s -j y -o %s.log -b y -cwd -V '%s > %s.out'`, jobname, jobname, cmd, jobname)
@@ -214,7 +246,7 @@ func generateScript(sp_to_seg, seg_to_body, sp_dir, out_dir string) error {
 	}
 
 	if curFiles > 0 {
-		zlast := zoffset + *blocksize - 1
+		zlast := zoffset + *slabZ - 1
 
 		cmd := fmt.Sprintf(`%s/raveler-exporter -minz=%d -maxz=%d %s %s %s %s`, *binpath, zstart, zlast,
 			sp_to_seg, seg_to_body, sp_dir, out_dir)

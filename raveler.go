@@ -2,10 +2,12 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -121,8 +123,8 @@ func seekSpan(block [3]int, roi []Span, curSpanI int) (int, bool) {
 
 // Returns the first Z of the block in which this z is located.
 func zhead(z int) int {
-	nz := z / *blocksize
-	return *blocksize * nz
+	nz := z / *slabZ
+	return *slabZ * nz
 }
 
 // getSuperpixelId returns the superpixel id given a color.  This routine handles 32-bit
@@ -158,7 +160,7 @@ func getSuperpixelId(c color.Color, format SuperpixelFormat) (id uint32, err err
 	return
 }
 
-func processRavelerExport(sp_to_seg, seg_to_body, sp_dir, out_dir string) error {
+func processRavelerExport(sp_to_seg, seg_to_body, sp_dir string) error {
 	// If we have roi, load it.
 	var roi []Span
 
@@ -237,7 +239,7 @@ func processRavelerExport(sp_to_seg, seg_to_body, sp_dir, out_dir string) error 
 	seg2body = nil
 
 	// Read in an transform each superpixel image file.
-	return transformImages(sp2body, roi, sp_dir, out_dir)
+	return transformImages(sp2body, roi, sp_dir)
 }
 
 func loadSegBodyMap(filename string) (map[uint64]uint64, error) {
@@ -274,16 +276,27 @@ func loadSegBodyMap(filename string) (map[uint64]uint64, error) {
 	return segmentToBodyMap, nil
 }
 
-func transformImages(sp2body map[Superpixel]uint64, roi []Span, sp_dir, out_dir string) error {
-	// Make sure output directory exists
-	if fileinfo, err := os.Stat(out_dir); os.IsNotExist(err) {
-		fmt.Printf("Creating output directory: %s\n", out_dir)
-		err := os.MkdirAll(out_dir, 0744)
-		if err != nil {
-			return fmt.Errorf("Can't make output directory: %s\n", err.Error())
+type layerT struct {
+	buf  []uint64
+	nx   int
+	ny   int
+	nz   int
+	nxy  int
+	nxyz int
+}
+
+func transformImages(sp2body map[Superpixel]uint64, roi []Span, sp_dir string) error {
+	// Make sure output directory exists if it's specified.
+	if *outdir != "" {
+		if fileinfo, err := os.Stat(*outdir); os.IsNotExist(err) {
+			fmt.Printf("Creating output directory: %s\n", *outdir)
+			err := os.MkdirAll(*outdir, 0744)
+			if err != nil {
+				return fmt.Errorf("Can't make output directory: %s\n", err.Error())
+			}
+		} else if !fileinfo.IsDir() {
+			return fmt.Errorf("Supplied output path (%s) is not a directory.", *outdir)
 		}
-	} else if !fileinfo.IsDir() {
-		return fmt.Errorf("Supplied output path (%s) is not a directory.", out_dir)
 	}
 
 	fileregex, err := regexp.Compile(`[[:digit:]]+\.png$`)
@@ -293,9 +306,7 @@ func transformImages(sp2body map[Superpixel]uint64, roi []Span, sp_dir, out_dir 
 
 	// Read all image files, transform them, and write to output directory.
 	var (
-		outbuf  []uint64
-		bytebuf []byte
-		nx, ny  int // # of voxels in X and Y direction
+		layer   layerT
 		zoffset int // the starting z of current output buffer
 		zInBuf  int // # of Z slices stored in output buffer
 		first   bool
@@ -354,15 +365,15 @@ func transformImages(sp2body map[Superpixel]uint64, roi []Span, sp_dir, out_dir 
 
 		// Allocate buffer if not already allocated.
 		b := img.Bounds()
-		if outbuf == nil {
-			nx = b.Dx()
-			ny = b.Dy()
-			nxy := nx * ny
-			outbuf = make([]uint64, *blocksize*nxy, *blocksize*nxy)
-			bytebuf = make([]byte, *blocksize*nxy*8, *blocksize*nxy*8)
-		} else if nx != b.Dx() || ny != b.Dy() {
+		if layer.buf == nil {
+			layer.nx, layer.ny = b.Dx(), b.Dy()
+			layer.nz = *slabZ
+			layer.nxy = layer.nx * layer.ny
+			layer.nxyz = layer.nxy * layer.nz
+			layer.buf = make([]uint64, layer.nxyz, layer.nxyz)
+		} else if layer.nx != b.Dx() || layer.ny != b.Dy() {
 			return fmt.Errorf("superpixel image changes sizes: expected %d x %d and got %d x %d: %s",
-				nx, ny, b.Dx(), b.Dy(), fullpath)
+				layer.nx, layer.ny, b.Dx(), b.Dy(), fullpath)
 		}
 
 		if first {
@@ -372,11 +383,11 @@ func transformImages(sp2body map[Superpixel]uint64, roi []Span, sp_dir, out_dir 
 
 		// Write past buffer if we are no longer in it
 		if zInBuf != 0 && zhead(z) != zoffset {
-			if err := writeBuffer(out_dir, nx, ny, zoffset, outbuf, bytebuf); err != nil {
+			if err := writeLayer(layer, zoffset); err != nil {
 				return err
 			}
-			for i := range outbuf {
-				outbuf[i] = 0
+			for i := range layer.buf {
+				layer.buf[i] = 0
 			}
 			zoffset = zhead(z)
 			zInBuf = 0
@@ -384,7 +395,7 @@ func transformImages(sp2body map[Superpixel]uint64, roi []Span, sp_dir, out_dir 
 
 		// Iterate through the image and store body into our output buffer.
 		zInBuf++
-		zbuf := z % *blocksize // z offset into the buffer
+		zbuf := z % layer.nz // z offset into the buffer
 
 		var label uint32
 		var body uint64
@@ -427,7 +438,7 @@ func transformImages(sp2body map[Superpixel]uint64, roi []Span, sp_dir, out_dir 
 				if *bodyoffset != 0 {
 					body += uint64(*bodyoffset)
 				}
-				outbuf[zbuf*nx*ny+i] = body
+				layer.buf[zbuf*layer.nxy+i] = body
 				i++
 			}
 		}
@@ -440,16 +451,91 @@ func transformImages(sp2body map[Superpixel]uint64, roi []Span, sp_dir, out_dir 
 
 	// Make sure we write any unsaved data in output buffer
 	if zInBuf != 0 {
-		if err := writeBuffer(out_dir, nx, ny, zoffset, outbuf, bytebuf); err != nil {
+		if err := writeLayer(layer, zoffset); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func writeBuffer(out_dir string, nx, ny, zoffset int, outbuf []uint64, bytebuf []byte) error {
+func writeLayer(layer layerT, zoffset int) error {
 	tlog := NewTimeLog()
 
+	// Compute some slab indexing
+	sxBytes := *slabX * 8
+	sxyBytes := *slabY * sxBytes
+	sxyzBytes := *slabZ * sxyBytes
+
+	// Iterate through all slabs in this layer, writing each one either to file or DVID via http POST
+	for oy := 0; oy < layer.ny; oy += *slabY {
+		endY := oy + *slabY
+		if endY > layer.ny {
+			endY = layer.ny
+		}
+		for ox := 0; ox < layer.nx; ox += *slabX {
+			endX := ox + *slabX
+			if endX > layer.nx {
+				endX = layer.nx
+			}
+
+			// Store data from slab into the POST buffer
+			slabBuf := make([]byte, sxyzBytes, sxyzBytes)
+			for z := 0; z < *slabZ; z++ {
+				sy := 0
+				for y := oy; y < endY; y++ {
+					sx := 0
+					for x := ox; x < endX; x++ {
+						layerI := z*layer.nxy + y*layer.nx + x
+						si := z*sxyBytes + sy*sxBytes + sx*8
+						binary.LittleEndian.PutUint64(slabBuf[si:si+8], layer.buf[layerI])
+						sx++
+					}
+					sy++
+				}
+			}
+
+			// Send the data
+			if *url != "" {
+				if err := writeDVID(slabBuf, ox, oy, zoffset); err != nil {
+					return err
+				}
+			}
+			if *outdir != "" {
+				if err := writeFile(slabBuf, ox, oy, zoffset); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	tlog.Printf("Wrote layer starting at Z %d", zoffset)
+	return nil
+}
+
+func writeDVID(slabBuf []byte, ox, oy, oz int) error {
+	url := fmt.Sprintf("%s/%d_%d_%d/%d_%d_%d", *url, ox, oy, oz)
+	switch *compression {
+	case "gzip", "lz4":
+		url += "?compression=" + *compression
+	}
+
+	fmt.Printf("POSTing data to %s\n", url)
+	if *dryrun {
+		return nil
+	}
+
+	r, err := http.Post(url, "application/octet-stream", bytes.NewBuffer(slabBuf))
+	if err != nil {
+		return err
+	}
+	if r.StatusCode != http.StatusOK {
+		return fmt.Errorf("Received bad status from POST on %q: %d\n", url, r.StatusCode)
+	}
+
+	return nil
+}
+
+func writeFile(slabBuf []byte, ox, oy, oz int) error {
 	// Compute the output file name
 	var ext string
 	switch *compression {
@@ -462,12 +548,12 @@ func writeBuffer(out_dir string, nx, ny, zoffset int, outbuf []uint64, bytebuf [
 	default:
 		return fmt.Errorf("unknown compression type %q", *compression)
 	}
-	base := fmt.Sprintf("bodies-z%06d-%dx%dx%d.%s", zoffset, nx, ny, *blocksize, ext)
-	filename := filepath.Join(out_dir, base)
+	base := fmt.Sprintf("bodies-%6dx%6dx%6d+%6d+%6d+%6d.%s", *slabX, *slabY, *slabZ, ox, oy, oz, ext)
+	filename := filepath.Join(*outdir, base)
 
-	// Store the outbut buffer to preallocated byte slice.
-	for i, label := range outbuf {
-		binary.LittleEndian.PutUint64(bytebuf[i*8:i*8+8], label)
+	fmt.Printf("Writing data to %s\n", filename)
+	if *dryrun {
+		return nil
 	}
 
 	// Setup file for write
@@ -477,37 +563,45 @@ func writeBuffer(out_dir string, nx, ny, zoffset int, outbuf []uint64, bytebuf [
 	}
 	defer f.Close()
 
-	// Write the data
-	switch *compression {
-	case "none":
-		_, err = f.Write(bytebuf)
-		if err != nil {
-			return err
-		}
-	case "lz4":
-		compressed := make([]byte, lz4.CompressBound(bytebuf))
-		var n, outSize int
-		if outSize, err = lz4.Compress(bytebuf, compressed); err != nil {
-			return err
-		}
-		compressed = compressed[:outSize]
-		if n, err = f.Write(compressed); err != nil {
-			return err
-		}
-		if n != outSize {
-			return fmt.Errorf("Only able to write %d of %d lz4 compressed bytes\n", n, outSize)
-		}
-	case "gzip":
-		gw := gzip.NewWriter(f)
-		if _, err = gw.Write(bytebuf); err != nil {
-			return err
-		}
-		if err = gw.Close(); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("unknown compression type %q", *compression)
+	// Compress and write
+	out, err := compress(slabBuf)
+	if err != nil {
+		return err
 	}
-	tlog.Printf("Wrote %s", filename)
+
+	_, err = f.Write(out)
+	if err != nil {
+		return err
+	}
 	return nil
+}
+
+func compress(slabBuf []byte) ([]byte, error) {
+	switch *compression {
+
+	case "none":
+		return slabBuf, nil
+
+	case "lz4":
+		compressed := make([]byte, lz4.CompressBound(slabBuf))
+		var outSize int
+		if _, err := lz4.Compress(slabBuf, compressed); err != nil {
+			return nil, err
+		}
+		return compressed[:outSize], nil
+
+	case "gzip":
+		var buf bytes.Buffer
+		gw := gzip.NewWriter(&buf)
+		if _, err := gw.Write(slabBuf); err != nil {
+			return nil, err
+		}
+		if err := gw.Close(); err != nil {
+			return nil, err
+		}
+		return buf.Bytes(), nil
+
+	default:
+		return nil, fmt.Errorf("unknown compression type %q", *compression)
+	}
 }
