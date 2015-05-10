@@ -526,14 +526,13 @@ func writeDVID(slabBuf []byte, ox, oy, oz int) error {
 		return err
 	}
 
-	fmt.Printf("POSTing %d bytes to %s\n", len(out), url)
+	fmt.Printf("Attempting to POST %d bytes to %s\n", len(out), url)
 	if *dryrun {
 		return nil
 	}
 
-	outbuf := bytes.NewBuffer(out)
 	for {
-		r, err := http.Post(url, "application/octet-stream", outbuf)
+		r, err := http.Post(url, "application/octet-stream", bytes.NewBuffer(out))
 		if err != nil {
 			return err
 		}
