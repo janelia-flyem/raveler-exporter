@@ -127,10 +127,6 @@ func main() {
 
 	args := flag.Args()
 	if *script != "" {
-		if *outdir == "" {
-			fmt.Printf("Script output requires -outdir as well\n")
-			os.Exit(1)
-		}
 		if err := generateScript(args[0], args[1], args[2], *outdir); err != nil {
 			fmt.Printf("Error generating script: %s\n", err.Error())
 			os.Exit(1)
