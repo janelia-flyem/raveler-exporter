@@ -7,12 +7,14 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
 	"strconv"
+	"time"
 
 	"image"
 	"image/color"
@@ -513,31 +515,42 @@ func writeLayer(layer layerT, zoffset int) error {
 }
 
 func writeDVID(slabBuf []byte, ox, oy, oz int) error {
-	url := fmt.Sprintf("%s/raw/0_1_2/%d_%d_%d/%d_%d_%d", *url, *slabX, *slabY, *slabZ, ox, oy, oz)
+	url := fmt.Sprintf("%s/raw/0_1_2/%d_%d_%d/%d_%d_%d?throttle=on", *url, *slabX, *slabY, *slabZ, ox, oy, oz)
 	switch *compression {
 	case "gzip", "lz4":
-		url += "?compression=" + *compression
+		url += "&compression=" + *compression
 	}
 
-    out, err := compress(slabBuf)
-    if err != nil {
-        return err
-    }
+	out, err := compress(slabBuf)
+	if err != nil {
+		return err
+	}
 
 	fmt.Printf("POSTing %d bytes to %s\n", len(out), url)
 	if *dryrun {
 		return nil
 	}
 
-	r, err := http.Post(url, "application/octet-stream", bytes.NewBuffer(out))
-	if err != nil {
-		return err
+	for {
+		r, err := http.Post(url, "application/octet-stream", bytes.NewBuffer(out))
+		if err != nil {
+			return err
+		}
+		switch r.StatusCode {
+		case http.StatusOK:
+			fmt.Printf("POSTed successfully %d bytes to %s\n", len(out), url)
+			return nil
+		case http.StatusServiceUnavailable:
+			// Retry after variable delay
+			timeout := time.Duration(180 + rand.Intn(30))
+			time.Sleep(timeout * time.Second)
+			fmt.Printf("Unsuccessful POST of slab @ (%d,%d,%d) %d bytes.  Retrying in %d seconds\n",
+				ox, oy, oz, len(out), timeout)
+		default:
+			// We have a problem
+			return fmt.Errorf("Received bad status from POST on %q: %d\n", url, r.StatusCode)
+		}
 	}
-	if r.StatusCode != http.StatusOK {
-		return fmt.Errorf("Received bad status from POST on %q: %d\n", url, r.StatusCode)
-	}
-
-	return nil
 }
 
 func writeFile(slabBuf []byte, ox, oy, oz int) error {

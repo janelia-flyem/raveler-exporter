@@ -175,6 +175,18 @@ func generateScript(sp_to_seg, seg_to_body, sp_dir, out_dir string) error {
 		options = append(options, fmt.Sprintf("-roi=%s", *roiFile))
 	}
 
+	if *compression != "none" {
+		options = append(options, fmt.Sprintf("-compress=%s", *compression))
+	}
+
+	if *outdir != "" {
+		options = append(options, fmt.Sprintf("-outdir=%s", *outdir))
+	}
+
+	if *url != "" {
+		options = append(options, fmt.Sprintf("-url=%s", *url))
+	}
+
 	var (
 		jobnum           int
 		zstart, curFiles int
@@ -219,11 +231,11 @@ func generateScript(sp_to_seg, seg_to_body, sp_dir, out_dir string) error {
 			zlast := zoffset + *slabZ - 1
 
 			if curFiles >= *filesPerJob {
-				cmd := fmt.Sprintf(`%s/raveler-exporter %s -minz=%d -maxz=%d %s %s %s %s`, *binpath,
-					strings.Join(options, " "), zstart, zlast, sp_to_seg, seg_to_body, sp_dir, out_dir)
+				cmd := fmt.Sprintf(`%s/raveler-exporter %s -minz=%d -maxz=%d %s %s %s`, *binpath,
+					strings.Join(options, " "), zstart, zlast, sp_to_seg, seg_to_body, sp_dir)
 
 				jobname := fmt.Sprintf("ravelerexport-%d", jobnum)
-				job := fmt.Sprintf(`qsub -pe batch 16 -N %s -j y -o %s.log -b y -cwd -V '%s > %s.out'`, jobname, jobname, cmd, jobname)
+				job := fmt.Sprintf(`qsub -pe batch 16 -N %s -j y -o %s.log -b y -cwd -V '%s >> %s.log'`, jobname, jobname, cmd, jobname)
 				job += "\n"
 
 				if _, err := file.WriteString(job); err != nil {
