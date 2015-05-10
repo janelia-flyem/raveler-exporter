@@ -34,7 +34,7 @@ var (
 	maxz = flag.Int("maxz", math.MaxInt32, "")
 
 	// How the output should be compressed
-	compression = flag.String("compress", "none", "")
+	compression = flag.String("compress", "lz4", "")
 
 	roiFile = flag.String("roi", "", "")
 
@@ -52,7 +52,7 @@ Usage: raveler-exporter [options] <superpixel-to-segment-map> <segment-to-body-m
 		-outdir         =string   Output directory for file output
 		-url            =string   POST URL for DVID, e.g., "http://dvidserver.com/api/653/dataname"
 
-	    -compress       =string   Compression for output files.  default "none" but allows "gzip" and "lz4".
+	    -compress       =string   Compression for output files.  default "lz4" but allows "gzip" and "none".
 
 	    -script         =string   Generate batch script for running on SGE cluster (requires -directory)
 	    -filesperjob    =number   Number of Z slices that should be assigned to one cluster job if using -script.

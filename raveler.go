@@ -602,11 +602,11 @@ func compress(slabBuf []byte) ([]byte, error) {
 
 	case "lz4":
 		compressed := make([]byte, lz4.CompressBound(slabBuf))
-		var outSize int
-		if _, err := lz4.Compress(slabBuf, compressed); err != nil {
+		outsize, err := lz4.Compress(slabBuf, compressed)
+		if err != nil {
 			return nil, err
 		}
-		return compressed[:outSize], nil
+		return compressed[:outsize], nil
 
 	case "gzip":
 		var buf bytes.Buffer
