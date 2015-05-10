@@ -531,8 +531,9 @@ func writeDVID(slabBuf []byte, ox, oy, oz int) error {
 		return nil
 	}
 
+	outbuf := bytes.NewBuffer(out)
 	for {
-		r, err := http.Post(url, "application/octet-stream", bytes.NewBuffer(out))
+		r, err := http.Post(url, "application/octet-stream", outbuf)
 		if err != nil {
 			return err
 		}
